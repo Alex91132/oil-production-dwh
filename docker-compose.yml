@@ -1,0 +1,38 @@
+name: oil-production-dwh
+
+services:
+  db:
+    build:
+      context: .
+      dockerfile: db/Dockerfile
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-dwh}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dwh}
+      POSTGRES_DB: ${POSTGRES_DB:-oilfield}
+    ports:
+      - "${PG_HOST_PORT:-5435}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # Проверяем по TCP: во время инициализации PostgreSQL слушает только сокет,
+      # поэтому «здоров» он станет лишь после выполнения всех init-скриптов
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+
+  generator:
+    build: ./generator
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGHOST: db
+      PGPORT: 5432
+      PGUSER: ${POSTGRES_USER:-dwh}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-dwh}
+      PGDATABASE: ${POSTGRES_DB:-oilfield}
+    restart: "no"
+
+volumes:
+  pgdata:
