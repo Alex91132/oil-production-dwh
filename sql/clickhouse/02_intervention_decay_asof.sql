@@ -3,7 +3,9 @@
 -- Особенности ClickHouse:
 --   * ASOF JOIN — к каждому дню добычи присоединяется ПОСЛЕДНЕЕ завершённое ГТМ
 --     на этой скважине (в PostgreSQL понадобился бы LATERAL с ORDER BY ... LIMIT 1);
---   * комбинатор -If (medianIf) — «разворот» месяцев в столбцы за один проход.
+--   * комбинатор -If (medianExactIf) — «разворот» месяцев в столбцы за один проход.
+-- Медиана точная (Exact): обычная median в ClickHouse приближённая (по выборке)
+-- и может слегка меняться от запуска к запуску — для отчётов это недопустимо.
 -- Медиана, а не среднее: при низком дебите «до» (ЗБС на почти выбывших скважинах)
 -- отношение очень велико, и среднее перекосили бы единичные выбросы.
 
@@ -26,17 +28,17 @@ WITH
             intDiv(dateDiff('day', i.end_date, p.prod_date) - 1, 30) + 1  AS month_after,
             toFloat64(p.oil_t)                                          AS rate
         FROM dwh.fact_production_daily AS p
-        ASOF INNER JOIN dwh.fact_interventions AS i
-            ON p.well_id = i.well_id AND p.prod_date > i.end_date
+        ASOF JOIN dwh.fact_interventions AS i          -- ASOF JOIN = ASOF INNER JOIN; краткая
+            ON p.well_id = i.well_id AND p.prod_date > i.end_date  -- форма нужна парсеру Superset
         WHERE p.hours_on = 24
     )
 SELECT
     a.type_name                                                    AS intervention,
     uniqExact(a.intervention_id)                                   AS n,
-    round(medianIf(a.rate / b.rate_before, a.month_after = 1), 2)  AS month_1,
-    round(medianIf(a.rate / b.rate_before, a.month_after = 3), 2)  AS month_3,
-    round(medianIf(a.rate / b.rate_before, a.month_after = 6), 2)  AS month_6,
-    round(medianIf(a.rate / b.rate_before, a.month_after = 12), 2) AS month_12
+    round(medianExactIf(a.rate / b.rate_before, a.month_after = 1), 2)  AS month_1,
+    round(medianExactIf(a.rate / b.rate_before, a.month_after = 3), 2)  AS month_3,
+    round(medianExactIf(a.rate / b.rate_before, a.month_after = 6), 2)  AS month_6,
+    round(medianExactIf(a.rate / b.rate_before, a.month_after = 12), 2) AS month_12
 FROM after AS a
 INNER JOIN before AS b ON b.intervention_id = a.intervention_id
 WHERE b.rate_before > 0

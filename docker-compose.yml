@@ -103,7 +103,56 @@ services:
       retries: 30
       start_period: 60s
 
+  # --- Визуализация: Superset ----------------------------------------------
+  superset:
+    build:
+      context: .
+      dockerfile: superset/Dockerfile
+    # Миграции метаданных → администратор (повторный запуск безопасен) → роли → веб-сервер
+    command:
+      - sh
+      - -c
+      - >-
+        superset db upgrade &&
+        (superset fab create-admin --username "$$SUPERSET_ADMIN_USER" --password "$$SUPERSET_ADMIN_PASSWORD" --firstname Admin --lastname Demo --email admin@example.com || true) &&
+        superset init &&
+        /app/docker/entrypoints/run-server.sh
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    environment:
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:-local-demo-only-change-me}
+      SUPERSET_ADMIN_USER: ${SUPERSET_ADMIN_USER:-admin}
+      SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:-admin}
+    ports:
+      - "${SUPERSET_PORT:-8088}:8088"
+    volumes:
+      - superset-home:/app/superset_home
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://127.0.0.1:8088/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  # Одноразовая задача: создать подключение, датасеты, графики и дашборд через REST API
+  superset-init:
+    build:
+      context: .
+      dockerfile: superset/Dockerfile
+    command: ["python", "/app/bootstrap/create_dashboard.py"]
+    depends_on:
+      superset:
+        condition: service_healthy
+    environment:
+      SUPERSET_URL: http://superset:8088
+      SUPERSET_ADMIN_USER: ${SUPERSET_ADMIN_USER:-admin}
+      SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:-admin}
+      CLICKHOUSE_URI: clickhousedb://${CLICKHOUSE_USER:-dwh}:${CLICKHOUSE_PASSWORD:-dwh}@clickhouse:8123/dwh
+    restart: "no"
+
 volumes:
   pgdata:
   chdata:
   airflow-db-data:
+  superset-home:

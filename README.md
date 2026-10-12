@@ -8,13 +8,15 @@
 (падение дебита по Арпсу, рост обводнённости, износ насосов, эффект от ГТМ), поэтому
 аналитика даёт правдоподобные отраслевые выводы. Проект поднимается одной командой.
 
-**Стек:** PostgreSQL 16 · ClickHouse 26.8 · Apache Airflow 3.3 · SQL · Python · Docker Compose
+**Стек:** PostgreSQL 16 · ClickHouse 26.8 · Apache Airflow 3.3 · Apache Superset 6.1 · SQL · Python · Docker Compose
 
 ```
-PostgreSQL (OLTP)  ──►  Airflow DAG  ──►  ClickHouse (DWH, схема «звезда»)  ──►  аналитика
- источник, 3НФ          месяц за месяцем     факты + измерения + витрины
+PostgreSQL (OLTP)  ──►  Airflow DAG  ──►  ClickHouse (DWH, «звезда»)  ──►  Superset (дашборд)
+ источник, 3НФ          месяц за месяцем    факты + измерения + витрины     «дашборд как код»
                         со сверкой
 ```
+
+![Дашборд Superset](docs/dashboard.png)
 
 ## Что демонстрирует проект
 
@@ -33,10 +35,12 @@ PostgreSQL (OLTP)  ──►  Airflow DAG  ──►  ClickHouse (DWH, схем�
 - **Хранилище «звезда» в ClickHouse** и **ETL на Airflow**: идемпотентная загрузка
   с атомарной подменой партиций, backfill истории, сверка с источником до последнего
   знака, сравнение с PostgreSQL — см. [docs/clickhouse.md](docs/clickhouse.md)
+- **Дашборд в Superset как код:** подключение, датасеты, метрики, графики, раскладка
+  и фильтры создаются скриптом через REST API — см. [docs/superset.md](docs/superset.md)
 
 ## Быстрый старт
 
-Нужен только Docker (рекомендуется выделить ему от 4 ГБ памяти).
+Нужен только Docker (рекомендуется выделить ему от 6 ГБ памяти).
 
 ```bash
 git clone https://github.com/Alex91132/oil-production-dwh.git
@@ -49,12 +53,17 @@ docker compose up -d --build
 2. ClickHouse создаёт схему хранилища.
 3. Airflow стартует и сам загружает в хранилище всю историю — 69 месячных запусков
    (~3 мин). Ход загрузки — в интерфейсе Airflow: http://localhost:8080.
+4. Superset поднимается, и скрипт создаёт дашборд:
+   http://localhost:8088/superset/dashboard/oil-production/
+
+Весь стек с нуля готов примерно за 4 минуты.
 
 | Сервис | Адрес | Доступ |
 |---|---|---|
 | PostgreSQL (источник) | `localhost:5435`, база `oilfield` | `dwh` / `dwh` |
 | ClickHouse (хранилище) | `localhost:8123`, база `dwh` | `dwh` / `dwh` |
 | Airflow | http://localhost:8080 | без пароля (локальный стенд) |
+| Superset | http://localhost:8088 | `admin` / `admin` |
 
 Запустить любой аналитический запрос к источнику:
 
@@ -199,6 +208,22 @@ erDiagram
   без интервала данных. Ошибку поймала защита ClickHouse от подмены партиции из
   пустого источника; решено явным `CronDataIntervalTimetable` и проверкой интервала.
 
+## Дашборд (Этап 3)
+
+Подробно — в [docs/superset.md](docs/superset.md). Коротко:
+
+- **8 графиков:** KPI с трендом (добыча, фонд, обводнённость), динамика по
+  месторождениям, компенсация отборов, ГТМ по видам и годам, таблица затухания
+  эффекта ГТМ. Фильтры по месторождению и периоду.
+- **Дашборд как код:** [`superset/bootstrap/create_dashboard.py`](superset/bootstrap/create_dashboard.py)
+  создаёт всё через REST API Superset при первом запуске стека; изменения дашборда
+  идут через git, а не через клики.
+- **Проверено:** значения KPI сверены с прямыми запросами к ClickHouse, фильтры
+  применяются ко всем графикам, полный подъём с нуля создаёт дашборд автоматически.
+- **Методические детали:** медианы точные (приближённая `median` в ClickHouse давала
+  «плавающий» результат); у обводнённости убрано сравнение «+14,5 % к прошлому году»,
+  которое легко принять за процентные пункты (на деле +6,4 п.п.).
+
 ## Структура проекта
 
 ```
@@ -220,14 +245,22 @@ oil-production-dwh/
 ├── airflow/
 │   ├── Dockerfile
 │   └── dags/oil_dwh_monthly_load.py   # ETL PostgreSQL → ClickHouse
+├── superset/
+│   ├── Dockerfile
+│   ├── superset_config.py      # локаль, метаданные, ключ
+│   └── bootstrap/create_dashboard.py  # дашборд как код (REST API)
 ├── sql/
 │   ├── analytics/              # 11 аналитических запросов к PostgreSQL
 │   ├── checks/                 # проверки качества данных
 │   └── clickhouse/             # 4 запроса к хранилищу
-├── scripts/run_analytics.py    # прогон всех запросов → docs/*.md
+├── scripts/
+│   ├── run_analytics.py        # прогон всех запросов → docs/*.md
+│   └── dashboard_screenshot.py # снимок дашборда → docs/dashboard.png
 └── docs/
     ├── performance.md          # замеры EXPLAIN ANALYZE в PostgreSQL
     ├── clickhouse.md           # хранилище, DAG, сверка, сравнение с PostgreSQL
+    ├── superset.md             # дашборд, проверка, решённые проблемы
+    ├── dashboard.png
     ├── analytics_results.md
     └── analytics_results_clickhouse.md
 ```
@@ -236,7 +269,7 @@ oil-production-dwh/
 
 - [x] **Этап 1.** Операционная БД PostgreSQL, генератор данных, SQL-аналитика, замеры производительности
 - [x] **Этап 2.** ETL на Apache Airflow → аналитическое хранилище в ClickHouse (схема «звезда»)
-- [ ] **Этап 3.** Дашборд в Apache Superset
+- [x] **Этап 3.** Дашборд в Apache Superset («дашборд как код»)
 
 ## Об авторе
 

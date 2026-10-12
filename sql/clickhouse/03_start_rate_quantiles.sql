@@ -1,7 +1,7 @@
 -- Вопрос: как распределены стартовые дебиты новых скважин (первые 90 суток)
 --         по типу ствола и какая скважина лучшая в каждом типе?
 -- Особенности ClickHouse:
---   * quantiles(...) — несколько квантилей за один проход по данным;
+--   * quantilesExact(...) — несколько точных квантилей за один проход по данным;
 --   * argMax(x, y) — значение x в строке с максимальным y, без подзапроса;
 --   * arrayMap с лямбдой — округление элементов массива.
 
@@ -23,9 +23,9 @@ WITH first90 AS (
 SELECT
     trajectory,
     count()                                                    AS wells,
-    arrayMap(x -> round(x, 1), quantiles(0.1, 0.5, 0.9)(rate))  AS p10_p50_p90_t_d,
+    arrayMap(x -> round(x, 1), quantilesExact(0.1, 0.5, 0.9)(rate))  AS p10_p50_p90_t_d,
     argMax(well, rate)                                         AS best_well,
     round(max(rate), 1)                                        AS best_rate_t_d
 FROM first90
 GROUP BY trajectory
-ORDER BY quantile(0.5)(rate) DESC;
+ORDER BY quantileExact(0.5)(rate) DESC;
