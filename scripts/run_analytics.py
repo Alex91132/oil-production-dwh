@@ -1,14 +1,19 @@
 """
-Прогоняет все запросы из sql/analytics и sql/checks и сохраняет результаты
-в docs/analytics_results.md — чтобы их можно было посмотреть прямо на GitHub.
+Прогоняет все аналитические запросы и сохраняет результаты в Markdown —
+чтобы их можно было посмотреть прямо на GitHub:
+  * sql/analytics, sql/checks (PostgreSQL) → docs/analytics_results.md
+  * sql/clickhouse (хранилище)              → docs/analytics_results_clickhouse.md
 
-Запуск (БД должна быть поднята через docker compose):
+Запуск (стенд должен быть поднят через docker compose):
     python scripts/run_analytics.py
 """
 
+import base64
+import json
 import os
 import re
 import time
+import urllib.request
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -26,7 +31,21 @@ def fmt(value):
         return f"{value:f}"
     if isinstance(value, date):
         return value.isoformat()
+    if isinstance(value, list):
+        return "[" + ", ".join(fmt(v) for v in value) + "]"
     return str(value)
+
+
+def clickhouse_query(sql):
+    """Запрос к ClickHouse через HTTP-интерфейс; возвращает (колонки, строки)."""
+    url = (f"http://{os.getenv('CH_HOST', 'localhost')}:{os.getenv('CH_HTTP_PORT', '8123')}/"
+           "?database=dwh&default_format=JSONCompact")
+    auth = base64.b64encode(f"{os.getenv('CH_USER', 'dwh')}:{os.getenv('CH_PASSWORD', 'dwh')}".encode())
+    req = urllib.request.Request(url, data=sql.encode("utf-8"),
+                                 headers={"Authorization": "Basic " + auth.decode()})
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        payload = json.loads(resp.read())
+    return [m["name"] for m in payload["meta"]], payload["data"]
 
 
 def question(sql_text):
@@ -80,6 +99,27 @@ def main():
 
     out = ROOT / "docs" / "analytics_results.md"
     out.parent.mkdir(exist_ok=True)
+    out.write_text("\n".join(report), encoding="utf-8")
+    print(f"Сохранено: {out.relative_to(ROOT)}")
+
+    # --- ClickHouse
+    report = ["# Результаты запросов к хранилищу ClickHouse",
+              "",
+              "Сгенерировано скриптом `scripts/run_analytics.py` после загрузки хранилища DAG-ом Airflow.",
+              ""]
+    for path in sorted((ROOT / "sql" / "clickhouse").glob("*.sql")):
+        sql_text = path.read_text(encoding="utf-8")
+        t0 = time.perf_counter()
+        columns, rows = clickhouse_query(sql_text)
+        ms = (time.perf_counter() - t0) * 1000
+        title = re.sub(r"^\d+_", "", path.stem).replace("_", " ")
+        report += [f"## `clickhouse/{path.name}` — {title}", ""]
+        if q := question(sql_text):
+            report += [f"**Вопрос:** {q}", ""]
+        report += [to_markdown(columns, rows), "", f"_Время выполнения: {ms:.0f} мс_", ""]
+        print(f"clickhouse/{path.name}: {len(rows)} строк, {ms:.0f} мс")
+
+    out = ROOT / "docs" / "analytics_results_clickhouse.md"
     out.write_text("\n".join(report), encoding="utf-8")
     print(f"Сохранено: {out.relative_to(ROOT)}")
 

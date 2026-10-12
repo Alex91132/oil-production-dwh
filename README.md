@@ -8,7 +8,13 @@
 (падение дебита по Арпсу, рост обводнённости, износ насосов, эффект от ГТМ), поэтому
 аналитика даёт правдоподобные отраслевые выводы. Проект поднимается одной командой.
 
-**Стек:** PostgreSQL 16 · SQL · Python (NumPy) · Docker Compose
+**Стек:** PostgreSQL 16 · ClickHouse 26.8 · Apache Airflow 3.3 · SQL · Python · Docker Compose
+
+```
+PostgreSQL (OLTP)  ──►  Airflow DAG  ──►  ClickHouse (DWH, схема «звезда»)  ──►  аналитика
+ источник, 3НФ          месяц за месяцем     факты + измерения + витрины
+                        со сверкой
+```
 
 ## Что демонстрирует проект
 
@@ -24,10 +30,13 @@
 - **Проверки качества данных** для правил, которые не выражаются ограничениями схемы
 - **Замеры производительности** через `EXPLAIN ANALYZE` — с честными выводами,
   см. [docs/performance.md](docs/performance.md)
+- **Хранилище «звезда» в ClickHouse** и **ETL на Airflow**: идемпотентная загрузка
+  с атомарной подменой партиций, backfill истории, сверка с источником до последнего
+  знака, сравнение с PostgreSQL — см. [docs/clickhouse.md](docs/clickhouse.md)
 
 ## Быстрый старт
 
-Нужен только Docker.
+Нужен только Docker (рекомендуется выделить ему от 4 ГБ памяти).
 
 ```bash
 git clone https://github.com/Alex91132/oil-production-dwh.git
@@ -35,8 +44,19 @@ cd oil-production-dwh
 docker compose up -d --build
 ```
 
-Через ~30 секунд база создана и наполнена (≈540 тыс. строк добычи). Запустить
-любой аналитический запрос:
+Что произойдёт:
+1. PostgreSQL создаёт схему, генератор наполняет её (~30 с, ≈540 тыс. строк добычи).
+2. ClickHouse создаёт схему хранилища.
+3. Airflow стартует и сам загружает в хранилище всю историю — 69 месячных запусков
+   (~3 мин). Ход загрузки — в интерфейсе Airflow: http://localhost:8080.
+
+| Сервис | Адрес | Доступ |
+|---|---|---|
+| PostgreSQL (источник) | `localhost:5435`, база `oilfield` | `dwh` / `dwh` |
+| ClickHouse (хранилище) | `localhost:8123`, база `dwh` | `dwh` / `dwh` |
+| Airflow | http://localhost:8080 | без пароля (локальный стенд) |
+
+Запустить любой аналитический запрос к источнику:
 
 ```bash
 docker compose exec db psql -U dwh -d oilfield -f /sql/analytics/04_intervention_effect.sql
@@ -45,9 +65,15 @@ docker compose exec db psql -U dwh -d oilfield -f /sql/analytics/04_intervention
 > В Git Bash на Windows добавьте перед командой `MSYS_NO_PATHCONV=1` — иначе Git Bash
 > подменит путь `/sql/...` на путь Windows. В PowerShell и Linux/macOS команда работает как есть.
 
-Открыть консоль БД: `docker compose exec db psql -U dwh -d oilfield`.
-Подключиться внешним клиентом (DBeaver, DataGrip): `localhost:5435`, база `oilfield`,
-пользователь и пароль `dwh` (только для локального стенда; меняются в `.env`, см. `.env.example`).
+Запрос к хранилищу:
+
+```bash
+docker compose exec clickhouse clickhouse-client -u dwh --password dwh --queries-file /sql/clickhouse/02_intervention_decay_asof.sql
+```
+
+Открыть консоль: `docker compose exec db psql -U dwh -d oilfield` или
+`docker compose exec clickhouse clickhouse-client -u dwh --password dwh`.
+Учётные данные только для локального стенда; меняются в `.env` (см. `.env.example`).
 
 Перегенерировать данные с другим зерном:
 `docker compose run --rm generator python generate.py --force --seed 7`
@@ -150,15 +176,37 @@ erDiagram
   30 % — 80 % (запрос 07)
 - **Аварийные простои на новом месторождении стоят дороже всего:** 118 тыс. т
   недобора против 32–45 тыс. т на зрелых — там выше дебиты (запрос 06)
+- **Эффект ГРП живёт около года:** дебит удваивается в первый месяц, а к 12-му
+  возвращается к исходному уровню; после ОПЗ через год дебит даже ниже исходного
+  (ClickHouse, запрос 02 с `ASOF JOIN`)
+
+## Хранилище и загрузка (Этап 2)
+
+Подробно — в [docs/clickhouse.md](docs/clickhouse.md). Коротко:
+
+- **Схема «звезда»:** `dim_well`, `dim_date`, факты суточной добычи, закачки и ГТМ,
+  витрина «месторождение × месяц» для дашборда.
+- **DAG `oil_dwh_monthly_load`:** один запуск — один месяц. Месяц собирается
+  в промежуточной таблице и атомарно подменяет партицию (`REPLACE PARTITION`),
+  поэтому повторы и ретраи не создают дублей. После загрузки — сверка с PostgreSQL
+  по числу строк и точным суммам.
+- **Результат:** 538 437 строк и 13 944 830,318 т нефти — совпадение с источником
+  до последнего знака.
+- **Сравнение с PostgreSQL:** тяжёлый агрегат в 3–20 раз быстрее (в зависимости от
+  `count(DISTINCT)`), хранение в ~5 раз компактнее. Подробные замеры и оговорки —
+  в документации.
+- **Найденный подвох Airflow 3:** `schedule="@monthly"` по умолчанию даёт запуски
+  без интервала данных. Ошибку поймала защита ClickHouse от подмены партиции из
+  пустого источника; решено явным `CronDataIntervalTimetable` и проверкой интервала.
 
 ## Структура проекта
 
 ```
 oil-production-dwh/
-├── docker-compose.yml          # БД + одноразовый генератор данных
+├── docker-compose.yml          # источник, генератор, ClickHouse, Airflow
 ├── db/
 │   ├── Dockerfile
-│   └── init/                   # выполняется при первом создании БД
+│   └── init/                   # PostgreSQL: выполняется при первом создании БД
 │       ├── 01_schema.sql       # таблицы, ограничения, партиции
 │       ├── 02_reference_data.sql
 │       ├── 03_indexes.sql
@@ -166,19 +214,28 @@ oil-production-dwh/
 ├── generator/
 │   ├── Dockerfile
 │   └── generate.py             # модель добычи и загрузка через COPY
+├── clickhouse/
+│   ├── Dockerfile
+│   └── init/01_schema.sql      # хранилище: измерения, факты, витрины
+├── airflow/
+│   ├── Dockerfile
+│   └── dags/oil_dwh_monthly_load.py   # ETL PostgreSQL → ClickHouse
 ├── sql/
-│   ├── analytics/              # 11 аналитических запросов
-│   └── checks/                 # проверки качества данных
-├── scripts/run_analytics.py    # прогон всех запросов → docs/analytics_results.md
+│   ├── analytics/              # 11 аналитических запросов к PostgreSQL
+│   ├── checks/                 # проверки качества данных
+│   └── clickhouse/             # 4 запроса к хранилищу
+├── scripts/run_analytics.py    # прогон всех запросов → docs/*.md
 └── docs/
-    ├── performance.md          # замеры EXPLAIN ANALYZE
-    └── analytics_results.md
+    ├── performance.md          # замеры EXPLAIN ANALYZE в PostgreSQL
+    ├── clickhouse.md           # хранилище, DAG, сверка, сравнение с PostgreSQL
+    ├── analytics_results.md
+    └── analytics_results_clickhouse.md
 ```
 
 ## Дорожная карта
 
 - [x] **Этап 1.** Операционная БД PostgreSQL, генератор данных, SQL-аналитика, замеры производительности
-- [ ] **Этап 2.** ETL на Apache Airflow → аналитическое хранилище в ClickHouse (схема «звезда»)
+- [x] **Этап 2.** ETL на Apache Airflow → аналитическое хранилище в ClickHouse (схема «звезда»)
 - [ ] **Этап 3.** Дашборд в Apache Superset
 
 ## Об авторе

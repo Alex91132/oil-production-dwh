@@ -1,6 +1,7 @@
 name: oil-production-dwh
 
 services:
+  # --- Источник: операционная БД PostgreSQL --------------------------------
   db:
     build:
       context: .
@@ -21,6 +22,7 @@ services:
       timeout: 3s
       retries: 40
 
+  # Одноразовая задача: наполнить источник синтетическими данными
   generator:
     build: ./generator
     depends_on:
@@ -34,5 +36,74 @@ services:
       PGDATABASE: ${POSTGRES_DB:-oilfield}
     restart: "no"
 
+  # --- Хранилище: ClickHouse ------------------------------------------------
+  clickhouse:
+    build:
+      context: .
+      dockerfile: clickhouse/Dockerfile
+    environment:
+      CLICKHOUSE_DB: dwh
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-dwh}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-dwh}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ports:
+      - "${CH_HTTP_PORT:-8123}:8123"
+    volumes:
+      - chdata:/var/lib/clickhouse
+    ulimits:
+      nofile: { soft: 262144, hard: 262144 }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8123/ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+
+  # --- Оркестрация: Airflow ---------------------------------------------------
+  # Служебная БД Airflow (метаданные запусков) — отдельно от данных
+  airflow-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - airflow-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U airflow -d airflow"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+
+  # Airflow в режиме standalone: API-сервер, планировщик и исполнитель
+  # в одном контейнере — достаточно для локального стенда
+  airflow:
+    build: ./airflow
+    command: standalone
+    depends_on:
+      airflow-db:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      generator:
+        condition: service_completed_successfully   # грузим, только когда источник наполнен
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db:5432/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "False"   # история загружается сразу после старта
+      AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: "True" # локальный стенд: вход без пароля
+      AIRFLOW_CONN_OILFIELD_PG: postgresql://${POSTGRES_USER:-dwh}:${POSTGRES_PASSWORD:-dwh}@db:5432/${POSTGRES_DB:-oilfield}
+      AIRFLOW_CONN_CLICKHOUSE_DWH: clickhouse://${CLICKHOUSE_USER:-dwh}:${CLICKHOUSE_PASSWORD:-dwh}@clickhouse:8123/dwh
+    ports:
+      - "${AIRFLOW_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://127.0.0.1:8080/api/v2/monitor/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
 volumes:
   pgdata:
+  chdata:
+  airflow-db-data:
