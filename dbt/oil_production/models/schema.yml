@@ -56,11 +56,13 @@ models:
         data_tests:
           - not_null
           - accepted_values:
-              values: ['producer', 'injector']
+              arguments:
+                values: ['producer', 'injector']
       - name: trajectory
         data_tests:
           - accepted_values:
-              values: ['directional', 'horizontal', 'multilateral']
+              arguments:
+                values: ['directional', 'horizontal', 'multilateral']
 
   # ============ Marts ============
   - name: mart_field_monthly
