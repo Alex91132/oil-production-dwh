@@ -1,0 +1,6 @@
+.git
+**/__pycache__
+**/*.pyc
+**/*.log
+docs/
+!docs/dashboard.png

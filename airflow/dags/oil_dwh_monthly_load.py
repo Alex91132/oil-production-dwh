@@ -13,6 +13,10 @@
 3. `build_mart` — витрина «месторождение × месяц» тем же способом.
 4. `reconcile` — сверка с источником: число строк и точные суммы. При расхождении
    запуск падает.
+5. `build_dim_well_scd` — SCD Type 2: сравнивает текущие версии атрибутов скважин
+   с источником и закрывает/открывает версии при переводах под закачку и сменах пласта.
+6. `profile_after_load` — профиль распределения `oil_t` (KS-тест) плюс сверки
+   строк и сумм; при материальном расхождении запуск падает.
 
 **Идемпотентность.** Каждая задача перезаписывает только «свою» месячную партицию,
 поэтому повторный запуск и автоматические ретраи не создают дублей, а
@@ -258,13 +262,64 @@ def oil_dwh_monthly_load():
             raise ValueError(f"Расхождение с источником за {start:%Y-%m}: {failed}")
         print(f"Сверка за {start:%Y-%m} пройдена: добыча {production_rows} строк, закачка {injection_rows} строк")
 
+    @task
+    def build_dim_well_scd():
+        """SCD Type 2: снимок атрибутов скважин на дату запуска.
+
+        Исторического источника атрибутов нет — и Postgres, и ClickHouse хранят
+        текущее состояние. Поэтому дата версии — день запуска, а не месяц данных.
+        Повторный запуск за прошлый месяц ничего не меняет: план сравнивает текущие
+        версии с источником и при отсутствии изменений возвращает пустой список.
+        """
+        from scripts.scd_loader import apply_plan, fetch_current, plan_changes
+
+        client = ch_client()
+        source = [dict(zip(WELL_COLUMNS, row)) for row in pg_fetch(WELLS_SQL)]
+        current = fetch_current(client)
+        rows = plan_changes(current, source, pendulum.now("UTC").date())
+        inserted = apply_plan(client, rows)
+        print(f"dim_well_scd: скважин в источнике {len(source)}, текущих версий "
+              f"{len(current)}, новых строк {inserted}")
+
+    @task
+    def profile_after_load():
+        """Профиль распределений и сверки за месяц — то, чего не видит reconcile."""
+        import numpy as np
+
+        from scripts.quality_gate import build_checks, report
+
+        start, end, _ = month_bounds()
+        client = ch_client()
+        params = {"start": start, "end": end}
+        src_rows = pg_fetch("""SELECT oil_t FROM ops.daily_production
+                               WHERE prod_date >= %s AND prod_date < %s""", (start, end))
+        tgt_rows = client.query("""SELECT oil_t FROM fact_production_daily
+                                   WHERE prod_date >= {start:Date} AND prod_date < {end:Date}""",
+                                parameters=params).result_rows
+        source_values = np.array([float(r[0]) for r in src_rows], dtype=float)
+        target_values = np.array([float(r[0]) for r in tgt_rows], dtype=float)
+
+        verdict = build_checks(
+            column="oil_t",
+            source_values=source_values, target_values=target_values,
+            source_rows=len(src_rows), target_rows=len(tgt_rows),
+            source_sum=float(source_values.sum()), target_sum=float(target_values.sum()),
+        )
+        print(report(verdict))
+        if not verdict["passed"]:
+            raise ValueError("контроль качества не пройден: " + "; ".join(verdict["failures"]))
+
     reference = refresh_reference()
+    scd = build_dim_well_scd()
     production = load_production()
     injection = load_injection()
     mart = build_mart()
 
+    reference >> scd
     [reference, production, injection] >> mart
-    mart >> reconcile(production, injection)
+    reconcile_task = reconcile(production, injection)
+    mart >> reconcile_task
+    reconcile_task >> profile_after_load()
 
 
 oil_dwh_monthly_load()

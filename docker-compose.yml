@@ -77,7 +77,9 @@ services:
   # Airflow в режиме standalone: API-сервер, планировщик и исполнитель
   # в одном контейнере — достаточно для локального стенда
   airflow:
-    build: ./airflow
+    build:
+      context: .
+      dockerfile: airflow/Dockerfile
     command: standalone
     depends_on:
       airflow-db:

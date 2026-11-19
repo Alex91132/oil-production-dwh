@@ -35,7 +35,7 @@ class Version:
     changes: list[str] = field(default_factory=list)   # какие атрибуты изменились
 
 
-def _surrogate_key(well_id: int, valid_from: date) -> int:
+def surrogate_key(well_id: int, valid_from: date) -> int:
     """Детерминированный суррогатный ключ версии (не зависит от порядка строк)."""
     raw = f"{well_id}|{valid_from.isoformat()}".encode("utf-8")
     return int(hashlib.sha1(raw).hexdigest()[:15], 16)
@@ -65,7 +65,7 @@ def build_versions(snapshots: list[dict], tracked: tuple[str, ...] = TRACKED_ATT
             attrs = {k: v for k, v in snapshot.items() if k not in ("well_id", "as_of")}
             if current is None:
                 current = Version(well_id=well_id, attrs=dict(attrs), valid_from=as_of)
-                current.well_scd_id = _surrogate_key(well_id, as_of)
+                current.well_scd_id = surrogate_key(well_id, as_of)
                 versions.append(current)
                 continue
 
@@ -78,7 +78,7 @@ def build_versions(snapshots: list[dict], tracked: tuple[str, ...] = TRACKED_ATT
             current.is_current = False
             new_version = Version(well_id=well_id, attrs=dict(attrs), valid_from=as_of,
                                   changes=changed)
-            new_version.well_scd_id = _surrogate_key(well_id, as_of)
+            new_version.well_scd_id = surrogate_key(well_id, as_of)
             versions.append(new_version)
             current = new_version
 
