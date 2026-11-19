@@ -43,6 +43,10 @@ PostgreSQL (OLTP)  ──►  Airflow DAG  ──►  ClickHouse (DWH, «зве�
 - **Профилирование и контроль качества в DAG:** задача `profile_after_load` считает
   распределения (null%, кардинальность, skewness, IQR), сравнивает их KS-тестом и
   сверяет количество строк и суммы — см. [scripts/profile_columns.py](scripts/profile_columns.py)
+- **dbt для трансформаций:** слой staging (стандартизация имён и типов) и marts
+  (бизнес-логика: обводнённость, decline rate, компенсация) описаны моделями dbt.
+  `dbt build` строит витрины и запускает тесты (not_null, unique, accepted_values,
+  custom assertions) за один запуск — см. [dbt/](dbt/)
 
 ## Data Modeling & Quality Decisions
 
@@ -108,7 +112,50 @@ refresh_reference ──► build_dim_well_scd
         │
         ├──► load_production ──┐
         └──► load_injection  ──┴──► build_mart ──► reconcile ──► profile_after_load
+                                                            │
+                                                    dbt build (после DAG)
+                                                    ├── staging: стандартизация
+                                                    └── marts: бизнес-логика + тесты
 ```
+
+### dbt: трансформации отдельно от загрузки
+
+Airflow загружает сырые данные (facts, dimensions) — dbt строит витрины поверх них.
+Это разделение ответственности (ELT, не ETL): оркестрация и загрузка в Airflow,
+трансформация и тестирование в dbt.
+
+```
+dbt/oil_production/
+├── models/
+│   ├── staging/              # view: стандартизация имён и типов
+│   │   ├── stg_production_daily.sql
+│   │   ├── stg_injection_daily.sql
+│   │   └── stg_dim_well.sql
+│   └── marts/                # table: бизнес-логика
+│       ├── mart_field_monthly.sql    # добыча × месторождение × месяц
+│       └── mart_well_performance.sql # decline, watercut по скважинам
+├── tests/                    # кастомные assertions
+│   ├── assert_oil_non_negative.sql
+│   ├── assert_watercut_bounds.sql
+│   └── assert_well_exists_in_dim.sql
+├── schema.yml                # тесты + документация
+└── dbt_project.yml
+```
+
+**Тесты dbt** (запускаются `dbt build`, падают при нарушении):
+
+| Тест | Тип | Что проверяет |
+|---|---|---|
+| `not_null` на well_id, date, oil_t | стандартный | Нет пропусков в ключевых колонках |
+| `unique` на well_id в dim | стандартный | Нет дубликатов скважин |
+| `accepted_values` на purpose | стандартный | Только producer/injector |
+| `assert_oil_non_negative` | кастомный | Добыча ≥ 0 |
+| `assert_watercut_bounds` | кастомный | Обводнённость ∈ [0, 1] |
+| `assert_well_exists_in_dim` | кастомный | Каждый факт имеет измерение (referential integrity) |
+
+**Почему dbt, а не SQL в Airflow:** тесты запускаются вместе с моделями
+(нельзя построить витрину с битыми данными), документация генерируется
+автоматически (`dbt docs generate`), lineage виден в графе (`dbt docs serve`).
 
 - `build_dim_well_scd` берёт актуальные атрибуты из PostgreSQL, сравнивает с текущими
   версиями в ClickHouse и пишет только изменения. Дата версии — **день запуска**, а не

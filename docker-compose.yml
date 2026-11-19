@@ -74,6 +74,26 @@ services:
       timeout: 3s
       retries: 40
 
+  # --- Трансформации: dbt -----------------------------------------------------
+  # Запускается после Airflow (данные уже загружены), строит staging + marts.
+  # dbt build = модели + тесты за один запуск.
+  dbt:
+    build:
+      context: ./dbt
+      dockerfile: Dockerfile
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      airflow:
+        condition: service_healthy
+    environment:
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: "8123"
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-dwh}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-dwh}
+      CLICKHOUSE_DB: dwh
+    restart: "no"
+
   # Airflow в режиме standalone: API-сервер, планировщик и исполнитель
   # в одном контейнере — достаточно для локального стенда
   airflow:

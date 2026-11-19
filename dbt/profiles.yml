@@ -1,0 +1,15 @@
+# Профиль подключения к ClickHouse для dbt.
+# В Docker передаётся через переменные окружения (см. docker-compose.yml).
+oil_production:
+  target: dev
+  outputs:
+    dev:
+      type: clickhouse
+      host: "{{ env_var('CLICKHOUSE_HOST', 'clickhouse') }}"
+      port: "{{ env_var('CLICKHOUSE_PORT', '8123') | int }}"
+      user: "{{ env_var('CLICKHOUSE_USER', 'default') }}"
+      password: "{{ env_var('CLICKHOUSE_PASSWORD', '') }}"
+      database: "{{ env_var('CLICKHOUSE_DB', 'dwh') }}"
+      schema: "{{ env_var('CLICKHOUSE_DB', 'dwh') }}"
+      threads: 4
+      secure: false

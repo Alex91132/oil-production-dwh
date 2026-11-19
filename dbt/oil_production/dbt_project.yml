@@ -1,0 +1,25 @@
+name: oil_production
+version: "1.0.0"
+config-version: 2
+
+profile: oil_production
+
+model-paths: ["models"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+
+target: dev
+
+models:
+  oil_production:
+    staging:
+      +materialized: view
+      +schema: staging
+    marts:
+      +materialized: table
+      +schema: marts
+
+# Описание: Airflow загружает сырые данные в dwh.fact_* и dwh.dim_*
+# (схема «звезда»). dbt строит поверх них слой трансформаций:
+#   staging/ — стандартизация имён и типов (view)
+#   marts/   — бизнес-логика и агрегаты (table)
