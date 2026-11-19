@@ -78,29 +78,82 @@ def profile_column(values: list | np.ndarray, column: str) -> ColumnProfile:
 
 
 def compare_distributions(source: np.ndarray, target: np.ndarray,
-                          column: str, alpha: float = 0.05) -> tuple[ColumnProfile, bool]:
+                          column: str, alpha: float = 0.05,
+                          min_ks_effect: float = 0.02) -> tuple[ColumnProfile, bool]:
     """KS-тест: совпадают ли распределения source и target.
 
-    Возвращает (профиль target, passed). Если p > alpha — распределения
-    статистически не различимы → загрузка корректна.
+    Важно понимать, чего тест не умеет: он сравнивает форму распределения, а не
+    количество строк. Случайно потерянные 5 % строк или задвоенные 10 % дадут
+    тот же KS, что и корректная загрузка — для этого есть `reconcile_counts`.
+
+    Поэтому провал засчитывается только если распределение И значимо отличается,
+    И эффект материален (`ks_stat >= min_ks_effect`): на миллионах строк
+    p-value падает от любого незначимого сдвига.
     """
     src = np.asarray(source, dtype=float)
     tgt = np.asarray(target, dtype=float)
-    # убираем NaN
     src = src[~np.isnan(src)]
     tgt = tgt[~np.isnan(tgt)]
 
+    p = profile_column(target, column)
     if len(src) < 10 or len(tgt) < 10:
-        return profile_column(target, column), True  # слишком мало данных для теста
+        p.issues.append(f"мало данных для KS (n={len(src)}/{len(tgt)}) — тест не проводился")
+        return p, True
 
     ks_stat, p_value = stats.ks_2samp(src, tgt)
-    p = profile_column(target, column)
-    p.ks_stat = round(ks_stat, 4)
-    p.ks_pvalue = round(p_value, 6)
-    passed = p_value > alpha
-    if not passed:
-        p.issues.append(f"KS-тест: распределение отличается (p={p_value:.4f} < {alpha})")
+    p.ks_stat = round(float(ks_stat), 4)
+    p.ks_pvalue = round(float(p_value), 6)
+
+    significant = p_value <= alpha
+    material = ks_stat >= min_ks_effect
+    passed = not (significant and material)
+
+    if significant and material:
+        p.issues.append(
+            f"KS-тест: распределение изменилось (ks={ks_stat:.3f} ≥ {min_ks_effect}, "
+            f"p={p_value:.4f})")
+    elif significant and not material:
+        p.issues.append(
+            f"KS значим, но эффект мал (ks={ks_stat:.3f}) — практически то же распределение")
     return p, passed
+
+
+def reconcile_counts(source_rows: int, target_rows: int, tolerance: int = 0) -> dict:
+    """Сверка числа строк: ловит потерю и дублирование, которые KS не видит."""
+    diff = target_rows - source_rows
+    ok = abs(diff) <= tolerance
+    return {
+        "check": "rows", "source": source_rows, "target": target_rows, "diff": diff,
+        "passed": ok,
+        "message": "" if ok else f"строк в target {target_rows:,} против {source_rows:,} "
+                                 f"в source (разница {diff:+,})",
+    }
+
+
+def reconcile_sum(name: str, source_sum: float, target_sum: float,
+                  rel_tolerance: float = 1e-6) -> dict:
+    """Сверка суммы метрики: ловит подмену значений, которую KS может пропустить."""
+    if source_sum == 0:
+        rel = 0.0 if target_sum == 0 else math.inf
+    else:
+        rel = abs(target_sum - source_sum) / abs(source_sum)
+    ok = rel <= rel_tolerance
+    return {
+        "check": f"sum:{name}", "source": source_sum, "target": target_sum,
+        "rel_diff": rel, "passed": ok,
+        "message": "" if ok else f"сумма {name} расходится на {rel * 100:.4f} % "
+                                 f"({source_sum:,.3f} → {target_sum:,.3f})",
+    }
+
+
+def reconcile_report(checks: list[dict]) -> str:
+    """Текстовая сводка сверок для лога Airflow."""
+    lines = ["сверка source → target"]
+    for check in checks:
+        mark = "✓" if check["passed"] else "✗"
+        detail = check["message"] or f"ok ({check['check']})"
+        lines.append(f"  {mark} {detail}")
+    return "\n".join(lines)
 
 
 def _check_issues(p: ColumnProfile) -> None:

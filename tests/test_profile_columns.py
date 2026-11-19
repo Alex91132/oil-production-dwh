@@ -5,6 +5,7 @@ import pytest
 
 from scripts.profile_columns import (
     ColumnProfile, compare_distributions, profile_column, profile_report,
+    reconcile_counts, reconcile_report, reconcile_sum,
 )
 
 
@@ -59,11 +60,60 @@ class TestCompareDistributions:
         _, passed = compare_distributions(src, tgt, "test")
         assert not passed  # разные распределения → p < 0.05
 
-    def test_too_few_data_passes(self):
+    def test_too_few_data_passes_but_is_flagged(self):
         src = np.array([1.0, 2.0])
         tgt = np.array([3.0, 4.0])
-        _, passed = compare_distributions(src, tgt, "test")
-        assert passed  # слишком мало данных — пропускаем
+        profile, passed = compare_distributions(src, tgt, "test")
+        assert passed  # слишком мало данных — не валим загрузку
+        assert any("мало данных" in issue for issue in profile.issues), \
+            "молчаливый пропуск контроля недопустим — должно быть предупреждение"
+
+    def test_trivial_shift_on_big_data_does_not_fail(self):
+        """На больших n p-value падает от любого сдвига — решает сила эффекта."""
+        rng = np.random.default_rng(7)
+        src = rng.normal(100, 15, 200_000)
+        tgt = rng.normal(100.5, 15, 200_000)          # сдвиг 0,5 % от среднего
+        profile, passed = compare_distributions(src, tgt, "oil")
+        assert passed
+        assert profile.ks_pvalue < 0.05               # KS «значим»
+        assert any("эффект мал" in issue for issue in profile.issues)
+
+    def test_real_corruption_fails(self):
+        rng = np.random.default_rng(7)
+        src = rng.normal(100, 15, 50_000)
+        tgt = src.copy()
+        tgt[: int(len(tgt) * 0.05)] = 0.0             # 5 % строк обнулили
+        _, passed = compare_distributions(src, tgt, "oil")
+        assert not passed
+
+
+class TestReconciliation:
+    """То, чего KS не умеет: потерю строк, дубликаты и подмену значений."""
+
+    def test_counts_ok(self):
+        check = reconcile_counts(1000, 1000)
+        assert check["passed"] and check["diff"] == 0
+
+    def test_counts_catch_lost_rows(self):
+        check = reconcile_counts(200_000, 190_000)
+        assert not check["passed"]
+        assert "разница -10,000" in check["message"]
+
+    def test_counts_catch_duplicates(self):
+        check = reconcile_counts(200_000, 220_000)
+        assert not check["passed"]
+
+    def test_sum_ok_within_tolerance(self):
+        assert reconcile_sum("oil_t", 1_234_567.89, 1_234_567.89)["passed"]
+
+    def test_sum_catches_substitution(self):
+        check = reconcile_sum("oil_t", 1000.0, 1001.0)
+        assert not check["passed"]
+        assert "0.1000 %" in check["message"]
+
+    def test_report_marks_failures(self):
+        report = reconcile_report([reconcile_counts(10, 9), reconcile_sum("oil", 5.0, 5.0)])
+        assert "✗" in report and "✓" in report
 
 
 class TestProfileReport:
