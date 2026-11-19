@@ -263,6 +263,32 @@ def oil_dwh_monthly_load():
         failed = {name: (src, dst) for name, (src, dst) in checks.items() if tuple(src) != tuple(dst)}
         for name, (src, dst) in checks.items():
             print(f"{'OK ' if name not in failed else 'ОШИБКА'} {name}: источник {tuple(src)}, хранилище {tuple(dst)}")
+
+        # Паритет с dbt: витрина временно строится двумя путями — Airflow и dbt.
+        # Пока миграция не завершена, сверяем их между собой; если dbt ещё не
+        # собирался, проверку пропускаем (иначе DAG зависел бы от порядка запуска).
+        has_dbt_mart = client.query(
+            "SELECT count() FROM system.tables "
+            "WHERE database = 'dwh_marts' AND name = 'mart_field_monthly'"
+        ).result_rows[0][0]
+        if has_dbt_mart:
+            airflow_mart = client.query(
+                """SELECT sum(oil_t), sum(water_m3), sum(injection_m3)
+                   FROM dwh.mart_field_monthly WHERE month = {start:Date}""",
+                parameters=params).result_rows[0]
+            dbt_mart = client.query(
+                """SELECT sum(oil_t), sum(water_m3), sum(injection_m3)
+                   FROM dwh_marts.mart_field_monthly WHERE month = {start:Date}""",
+                parameters=params).result_rows[0]
+            diff = max((abs(float(a) - float(b)) for a, b in zip(airflow_mart, dbt_mart)
+                        if a is not None and b is not None), default=0.0)
+            print(f"{'OK ' if diff <= 0.01 else 'ОШИБКА'} паритет с dbt: "
+                  f"airflow {tuple(airflow_mart)}, dbt {tuple(dbt_mart)}")
+            if diff > 0.01:
+                failed["паритет Airflow ↔ dbt"] = (airflow_mart, dbt_mart)
+        else:
+            print("паритет с dbt: витрина dwh_marts ещё не собрана — проверка пропущена")
+
         if failed:
             raise ValueError(f"Расхождение с источником за {start:%Y-%m}: {failed}")
         print(f"Сверка за {start:%Y-%m} пройдена: добыча {production_rows} строк, закачка {injection_rows} строк")

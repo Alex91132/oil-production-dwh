@@ -127,35 +127,65 @@ Airflow загружает сырые данные (facts, dimensions) — dbt �
 ```
 dbt/oil_production/
 ├── models/
-│   ├── staging/              # view: стандартизация имён и типов
+│   ├── staging/              # view: стандартизация имён и типов → база dwh_staging
 │   │   ├── stg_production_daily.sql
 │   │   ├── stg_injection_daily.sql
 │   │   └── stg_dim_well.sql
-│   └── marts/                # table: бизнес-логика
-│       ├── mart_field_monthly.sql    # добыча × месторождение × месяц
-│       └── mart_well_performance.sql # decline, watercut по скважинам
-├── tests/                    # кастомные assertions
+│   └── marts/                # table: бизнес-логика → база dwh_marts
+│       ├── mart_field_monthly.sql      # добыча × месторождение × месяц
+│       └── mart_well_performance.sql   # decline, watercut, дебит по скважинам
+├── tests/
 │   ├── assert_oil_non_negative.sql
 │   ├── assert_watercut_bounds.sql
-│   └── assert_well_exists_in_dim.sql
-├── schema.yml                # тесты + документация
+│   ├── assert_well_exists_in_dim.sql
+│   ├── assert_mart_matches_facts.sql   # витрина не теряет строки фактов
+│   └── assert_mart_grain_unique.sql    # одна строка на месторождение × месяц
+├── schema.yml
 └── dbt_project.yml
 ```
 
-**Тесты dbt** (запускаются `dbt build`, падают при нарушении):
+**Формулы совпадают с витриной Airflow** — иначе сверка двух реализаций бессмысленна:
+
+```
+liquid_m3    = oil_t * 1000 / oil_density + water_m3   (тонны → м³ по плотности)
+watercut     = water_m3 / liquid_m3
+compensation = injection_m3 / liquid_m3
+```
+
+Проверка на данных за 2021-01: `oil_t` = 172 446,7 у обоих путей, `watercut` = 0,3344
+у обоих, расхождение сумм — 0. Задача `reconcile` сверяет `dwh.mart_field_monthly`
+(Airflow) с `dwh_marts.mart_field_monthly` (dbt) и падает при расхождении больше 0,01.
+
+**Как запускать:**
+
+```bash
+docker compose run --rm dbt      # ждёт данные в ClickHouse (до 10 минут) и делает dbt build
+docker compose up -d dbt         # то же, но сервисом
+```
+
+`dbt build` = модели + тесты за один прогон: собрать витрину с битыми данными нельзя.
+Документация и lineage — `dbt docs generate` / `dbt docs serve`.
+
+**Тесты:**
 
 | Тест | Тип | Что проверяет |
 |---|---|---|
-| `not_null` на well_id, date, oil_t | стандартный | Нет пропусков в ключевых колонках |
-| `unique` на well_id в dim | стандартный | Нет дубликатов скважин |
-| `accepted_values` на purpose | стандартный | Только producer/injector |
+| `not_null` на ключевых колонках | стандартный | Нет пропусков в ключах и метриках |
+| `unique` на `well_id` в измерении | стандартный | Нет дубликатов скважин |
+| `accepted_values` на purpose, trajectory | стандартный | Только известные категории |
 | `assert_oil_non_negative` | кастомный | Добыча ≥ 0 |
-| `assert_watercut_bounds` | кастомный | Обводнённость ∈ [0, 1] |
-| `assert_well_exists_in_dim` | кастомный | Каждый факт имеет измерение (referential integrity) |
+| `assert_watercut_bounds` | кастомный | Обводнённость ∈ [0, 1] при liquid > 0 |
+| `assert_well_exists_in_dim` | кастомный | Каждый факт имеет измерение |
+| `assert_mart_matches_facts` | кастомный | Суммы витрины = суммы фактов |
+| `assert_mart_grain_unique` | кастомный | Нет дублей по (месяц, месторождение) |
 
-**Почему dbt, а не SQL в Airflow:** тесты запускаются вместе с моделями
-(нельзя построить витрину с битыми данными), документация генерируется
-автоматически (`dbt docs generate`), lineage виден в графе (`dbt docs serve`).
+**CI:** отдельный workflow `dbt.yml` поднимает ClickHouse сервис-контейнером,
+загружает `dbt/ci_seed.sql` и запускает `dbt build` — ошибки компиляции и тесты
+ловятся до мержа.
+
+**Ограничение, о котором честно:** витрина `mart_field_monthly` пока строится двумя
+путями — задачей `build_mart` в Airflow и моделью dbt. Это переходный период: числа
+сверяются, но источник правды один — после удаления `build_mart` из DAG останется dbt.
 
 - `build_dim_well_scd` берёт актуальные атрибуты из PostgreSQL, сравнивает с текущими
   версиями в ClickHouse и пишет только изменения. Дата версии — **день запуска**, а не

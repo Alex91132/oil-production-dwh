@@ -6,6 +6,8 @@ RUN pip install --no-cache-dir dbt-clickhouse==1.9.0
 
 COPY oil_production/ ./oil_production/
 COPY profiles.yml ./profiles.yml
+COPY entrypoint.sh ./entrypoint.sh
+RUN chmod +x ./entrypoint.sh
 
-# Запуск: dbt build (модели + тесты) при старте контейнера
-CMD ["dbt", "build", "--project-dir", "oil_production", "--profiles-dir", "."]
+# Ждём загрузку данных в ClickHouse и запускаем dbt build (модели + тесты)
+CMD ["./entrypoint.sh"]

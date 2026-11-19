@@ -1,0 +1,48 @@
+name: dbt
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:26.8-alpine
+        ports:
+          - 8123:8123
+        env:
+          CLICKHOUSE_USER: dwh
+          CLICKHOUSE_PASSWORD: dwh
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+        options: >-
+          --health-cmd "wget -q --spider http://localhost:8123/ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Установка dbt
+        run: |
+          python -m pip install --upgrade pip
+          pip install dbt-clickhouse==1.9.0
+      - name: Тестовые данные
+        run: |
+          curl -fsS --data-binary @dbt/ci_seed.sql \
+            "http://localhost:8123/?user=dwh&password=dwh&multiquery=1"
+      - name: dbt build (модели + тесты)
+        working-directory: dbt
+        env:
+          CLICKHOUSE_HOST: localhost
+          CLICKHOUSE_PORT: "8123"
+          CLICKHOUSE_USER: dwh
+          CLICKHOUSE_PASSWORD: dwh
+          CLICKHOUSE_DB: dwh
+        run: dbt build --project-dir oil_production --profiles-dir .

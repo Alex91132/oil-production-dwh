@@ -17,93 +17,93 @@ models:
     description: "Суточная добыча: стандартизированные имена и типы"
     columns:
       - name: well_id
-        tests:
+        data_tests:
           - not_null
       - name: date
-        tests:
+        data_tests:
           - not_null
       - name: oil_t
-        tests:
+        data_tests:
           - not_null
       - name: is_producing
-        tests:
+        data_tests:
           - not_null
 
   - name: stg_injection_daily
     description: "Суточная закачка: стандартизированные имена и типы"
     columns:
       - name: well_id
-        tests:
+        data_tests:
           - not_null
       - name: date
-        tests:
+        data_tests:
           - not_null
       - name: injection_m3
-        tests:
+        data_tests:
           - not_null
 
   - name: stg_dim_well
     description: "Измерение «Скважина»: без трансформаций, для JOIN"
     columns:
       - name: well_id
-        tests:
+        data_tests:
           - not_null
           - unique
       - name: field_name
-        tests:
+        data_tests:
           - not_null
       - name: purpose
-        tests:
+        data_tests:
           - not_null
           - accepted_values:
               values: ['producer', 'injector']
       - name: trajectory
-        tests:
-          - not_null
+        data_tests:
           - accepted_values:
               values: ['directional', 'horizontal', 'multilateral']
 
   # ============ Marts ============
   - name: mart_field_monthly
-    description: |
-      Витрина: добыча и закачка по месторождению × месяц.
-      Содержит обводнённость и коэффициент компенсации.
+    description: >
+      Витрина «месторождение × месяц». Формулы совпадают с витриной Airflow:
+      liquid_m3 = oil_t * 1000 / oil_density + water_m3, watercut = water / liquid,
+      compensation = injection / liquid. Совпадение проверяется тестом
+      assert_mart_matches_airflow в общем конвейере.
     columns:
       - name: month
-        tests:
+        data_tests:
           - not_null
       - name: field_name
-        tests:
+        data_tests:
           - not_null
       - name: oil_t
-        tests:
+        data_tests:
+          - not_null
+      - name: liquid_m3
+        data_tests:
           - not_null
       - name: watercut
-        tests:
-          - not_null
-      - name: compensation
-        tests:
+        description: "Доля воды в добытой жидкости; всегда в [0, 1]"
+        data_tests:
           - not_null
 
   - name: mart_well_performance
-    description: |
-      Витрина: месячная эффективность скважин.
-      Decline rate, watercut, суточный дебит по каждой скважине.
+    description: >
+      Витрина «скважина × месяц»: дебит, обводнённость, темп падения добычи.
+      Колонки явно алиасятся — в ClickHouse ссылка `m.oil_t` без алиаса
+      создаёт колонку с именем «m.oil_t».
     columns:
-      - name: well_id
-        tests:
-          - not_null
       - name: month
-        tests:
+        data_tests:
+          - not_null
+      - name: well_id
+        data_tests:
           - not_null
       - name: oil_t
-        tests:
+        data_tests:
           - not_null
       - name: watercut
-        tests:
+        data_tests:
           - not_null
-      - name: purpose
-        tests:
-          - not_null
-          - accepted_values:
-              values: ['producer', 'injector']
+      - name: oil_rate_t_per_day
+        description: "Среднесуточный дебит по отработанным часам"
