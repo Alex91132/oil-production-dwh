@@ -29,7 +29,7 @@ def source_row(well_id: int, purpose: str = "producer", formation_id: int = 7) -
 def current_row(well_id: int, purpose: str = "producer", formation_id: int = 7) -> dict:
     row = source_row(well_id, purpose, formation_id)
     row.update({"well_scd_id": 1, "valid_from": "2015-01-01",
-                "valid_to": "9999-12-31", "is_current": True})
+                "valid_to": "2299-12-31", "is_current": True})
     return row
 
 
@@ -37,8 +37,8 @@ class TestPlanChanges:
     def test_new_well_gets_first_version(self):
         rows = plan_changes([], [source_row(1)], TODAY)
         assert len(rows) == 1
-        assert rows[0]["valid_from"] == TODAY.isoformat()
-        assert rows[0]["valid_to"] == OPEN_END.isoformat()
+        assert rows[0]["valid_from"] == TODAY
+        assert rows[0]["valid_to"] == OPEN_END
         assert rows[0]["is_current"] is True
         assert set(rows[0]) == set(SCD_COLUMNS)
 
@@ -50,10 +50,10 @@ class TestPlanChanges:
         assert len(rows) == 2
         closed, opened = rows
         assert closed["well_scd_id"] == 1              # та же версия, но закрытая
-        assert closed["valid_to"] == TODAY.isoformat()
+        assert closed["valid_to"] == TODAY
         assert closed["is_current"] is False
         assert opened["well_scd_id"] != closed["well_scd_id"]
-        assert opened["valid_from"] == TODAY.isoformat()
+        assert opened["valid_from"] == TODAY
         assert opened["purpose"] == "injector"
         assert opened["is_current"] is True
 
@@ -72,14 +72,14 @@ class TestPlanChanges:
     def test_second_change_same_day_updates_in_place(self):
         """Два изменения в один день не должны давать версию нулевой длины."""
         opened = current_row(1, purpose="producer")
-        opened["valid_from"] = TODAY.isoformat()
+        opened["valid_from"] = TODAY
         opened["well_scd_id"] = 777
         rows = plan_changes([opened], [source_row(1, purpose="injector")], TODAY)
         assert len(rows) == 1, "ожидаем обновление на месте, а не закрытие + открытие"
         row = rows[0]
         assert row["well_scd_id"] == 777
-        assert row["valid_from"] == TODAY.isoformat()
-        assert row["valid_to"] == OPEN_END.isoformat()
+        assert row["valid_from"] == TODAY
+        assert row["valid_to"] == OPEN_END
         assert row["is_current"] is True
         assert row["purpose"] == "injector"
 
@@ -92,9 +92,12 @@ class TestPlanChanges:
         rows = plan_changes([current_row(1)], [source_row(1, purpose="injector")], TODAY)
         from scripts.scd_builder import Version
 
+        def as_date(value):
+            return value if isinstance(value, date) else date.fromisoformat(value)
+
         versions = [Version(well_id=int(r["well_id"]), attrs={"purpose": r["purpose"]},
-                            valid_from=date.fromisoformat(r["valid_from"]),
-                            valid_to=date.fromisoformat(r["valid_to"]),
+                            valid_from=as_date(r["valid_from"]),
+                            valid_to=as_date(r["valid_to"]),
                             is_current=bool(r["is_current"]),
                             well_scd_id=int(r["well_scd_id"])) for r in rows]
         assert validate(versions) == []

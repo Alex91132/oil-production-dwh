@@ -33,8 +33,9 @@ CREATE TABLE IF NOT EXISTS dwh.dim_well_scd
     start_date       Date,
     md_m             Float32,
     -- управление версиями
-    valid_from       Date,                        -- с какой даты версия действительна
-    valid_to         Date DEFAULT toDate('9999-12-31'),
+    -- Date32, а не Date: открытый конец 2299 год не влезает в Date (максимум 2149)
+    valid_from       Date32,                      -- с какой даты версия действительна
+    valid_to         Date32 DEFAULT toDate32('2299-12-31'),
     is_current       Bool DEFAULT true,
     -- аудит
     loaded_at        DateTime DEFAULT now()

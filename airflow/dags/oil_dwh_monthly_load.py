@@ -158,7 +158,12 @@ def replace_partition(client, fact, stage, partition, fill):
     """Собрать месяц в промежуточной таблице и атомарно подменить партицию факта."""
     client.command(f"ALTER TABLE {stage} DROP PARTITION {partition}")
     fill()
-    client.command(f"ALTER TABLE {fact} REPLACE PARTITION {partition} FROM {stage}")
+    # ClickHouse 26.8+ отказывается подменять партицию из пустого источника
+    # (иначе молча сотрёт данные приёмника). Для идемпотентной перезагрузки месяца
+    # без данных это как раз нужно: месяц пустой — партиция тоже должна стать пустой.
+    client.command(
+        f"ALTER TABLE {fact} REPLACE PARTITION {partition} FROM {stage} "
+        "SETTINGS allow_replace_partition_from_empty_source = 1")
     client.command(f"ALTER TABLE {stage} DROP PARTITION {partition}")
 
 

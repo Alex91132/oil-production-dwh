@@ -94,13 +94,20 @@ def _version_row(row: dict, valid_from: date, valid_to: date, is_current: bool) 
     return _normalise(version)
 
 
+DATE_FIELDS = ("spud_date", "start_date", "valid_from", "valid_to")
+
+
 def _normalise(row: dict) -> dict:
-    """Приводит значение к тому, что примет ClickHouse (даты — ISO, bool — bool)."""
+    """Приводит строку к типам ClickHouse: даты — `date`, а не строки.
+
+    clickhouse_connect пишет колонку Date только из `datetime.date`; строка
+    «2014-05-01» валится с TypeError на сериализации.
+    """
     out = {}
     for name in SCD_COLUMNS:
         value = row.get(name)
-        if isinstance(value, date):
-            value = value.isoformat()
+        if name in DATE_FIELDS:
+            value = _as_date(value) if value is not None else None
         out[name] = value
     return out
 

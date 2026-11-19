@@ -21,7 +21,8 @@ from dataclasses import dataclass, field
 from datetime import date
 
 TRACKED_ATTRS = ("purpose", "trajectory", "formation_id")
-OPEN_END = date(9999, 12, 31)
+# Date32 в ClickHouse: верхняя граница 2299 год, 9999 туда не помещается
+OPEN_END = date(2299, 12, 31)
 
 
 @dataclass

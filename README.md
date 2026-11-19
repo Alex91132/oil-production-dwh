@@ -118,6 +118,17 @@ refresh_reference ──► build_dim_well_scd
 - `profile_after_load` — распределения и сверки за месяц; при материальном
   расхождении задача падает и останавливает контур.
 
+### Если стенд уже поднимался
+
+Init-скрипты ClickHouse выполняются только на **пустом** томе. Если `chdata` остался
+от прошлых запусков, таблица SCD не создастся — примените DDL вручную:
+
+```bash
+docker compose exec -T clickhouse clickhouse-client --multiquery < clickhouse/init/02_scd.sql
+```
+
+Либо начните с чистого тома: `docker compose down -v`.
+
 ### Что ещё не сделано
 
 - **Исторические атрибуты скважин.** SCD пишет версии с даты запуска: если атрибут
