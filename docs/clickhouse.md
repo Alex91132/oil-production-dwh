@@ -24,8 +24,8 @@ PostgreSQL (OLTP, ops.*)  ──►  Airflow DAG oil_dwh_monthly_load  ──►
 ## DAG `oil_dwh_monthly_load`
 
 ```
-refresh_reference ─┐
-load_production ───┼──► build_mart ──► reconcile
+refresh_reference ─┬──► build_dim_well_scd
+load_production ───┼──► dbt_build ──► reconcile ──► profile_after_load
 load_injection ────┘
 ```
 
@@ -33,8 +33,8 @@ load_injection ────┘
 |---|---|
 | `refresh_reference` | перезаливает `dim_well` и `fact_interventions`: заполняет копию и атомарно меняет местами (`EXCHANGE TABLES`) |
 | `load_production`, `load_injection` | собирают месяц в промежуточной таблице и атомарно подменяют партицию факта (`REPLACE PARTITION`) |
-| `build_mart` | строит месяц витрины тем же способом |
-| `reconcile` | сравнивает с источником число строк и точные суммы; при расхождении падает |
+| `dbt_build` | запускает dbt build: staging + marts в `dwh_marts` и тесты моделей (см. [dbt.md](dbt.md)) |
+| `reconcile` | сравнивает с источником число строк, точные суммы и сумму по витрине dbt; при расхождении падает |
 
 **Идемпотентность.** Каждая задача перезаписывает только свою месячную партицию.
 Повтор запуска или автоматический ретрай не создают дублей, а параллельные запуски

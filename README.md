@@ -113,11 +113,10 @@ JOIN dwh.dim_well_scd AS d
 refresh_reference ──► build_dim_well_scd
         │
         ├──► load_production ──┐
-        └──► load_injection  ──┴──► build_mart ──► reconcile ──► profile_after_load
-                                                            │
-                                                    dbt build (после DAG)
-                                                    ├── staging: стандартизация
-                                                    └── marts: бизнес-логика + тесты
+        └──► load_injection  ──┴──► dbt_build ──► reconcile ──► profile_after_load
+                                        │
+                                        ├── staging: стандартизация (view)
+                                        └── marts: бизнес-логика + тесты (table)
 ```
 
 ### dbt: трансформации отдельно от загрузки
@@ -154,9 +153,9 @@ watercut     = water_m3 / liquid_m3
 compensation = injection_m3 / liquid_m3
 ```
 
-Проверка на данных за 2021-01: `oil_t` = 172 446,7 у обоих путей, `watercut` = 0,3344
-у обоих, расхождение сумм — 0. Задача `reconcile` сверяет `dwh.mart_field_monthly`
-(Airflow) с `dwh_marts.mart_field_monthly` (dbt) и падает при расхождении больше 0,01.
+Проверка на данных за 2021-01: `oil_t` = 172 446,7 в витрине и в фактах, `watercut` = 0,3344.
+Задача `reconcile` сверяет сумму по `dwh_marts.mart_field_monthly` с суммой по
+`fact_production_daily` и падает при расхождении больше 0,01.
 
 **Как запускать:**
 
@@ -184,6 +183,7 @@ make dbt-test   # только тесты по собранным моделям
 | `assert_mart_matches_facts` | кастомный | Суммы витрины = суммы фактов |
 | `assert_mart_grain_unique` | кастомный | Нет дублей по (месяц, месторождение) |
 | `assert_watercut_null_only_without_liquid` | кастомный | `watercut` = NULL только при нулевой жидкости |
+| `assert_injection_not_lost` | кастомный | Сумма закачки в витрине = сумма по фактам |
 
 **CI:** отдельный workflow `dbt.yml` поднимает ClickHouse сервис-контейнером,
 загружает `dbt/ci_seed.sql` и запускает `dbt build` — ошибки компиляции и тесты

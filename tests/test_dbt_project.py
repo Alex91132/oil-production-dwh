@@ -92,6 +92,7 @@ def test_custom_tests_reference_existing_models():
         "assert_mart_matches_facts.sql",
         "assert_mart_grain_unique.sql",
         "assert_watercut_null_only_without_liquid.sql",
+        "assert_injection_not_lost.sql",
     }
     assert set(files) == expected
     for path in tests_dir.glob("*.sql"):

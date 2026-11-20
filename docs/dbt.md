@@ -63,6 +63,11 @@ compensation = injection_m3 / liquid_m3
 oil_t_per_day = oil_t / число дней в месяце
 ```
 
+Добыча и закачка агрегируются **по месторождению отдельно** и соединяются по
+(месяц, месторождение). Джойн по `well_id` был бы ошибкой: нагнетательные и
+добывающие — разные скважины, и закачка обнулилась бы. Эта ошибка была в первой
+версии модели; теперь её ловит тест `assert_injection_not_lost`.
+
 Складывать `oil_t` (тонны) с `water_m3` (кубометры) нельзя — получается число без
 физического смысла, и тест на диапазон `[0, 1]` тогда проходит всегда. Поэтому
 пересчёт через плотность обязателен.
@@ -83,15 +88,24 @@ oil_t_per_day = oil_t / число дней в месяце
 | `assert_mart_matches_facts` | суммы витрины равны суммам фактов |
 | `assert_mart_grain_unique` | одна строка на месторождение × месяц |
 | `assert_watercut_null_only_without_liquid` | `watercut` = NULL ровно тогда, когда жидкости не было |
+| `assert_injection_not_lost` | сумма закачки в витрине равна сумме по фактам |
 
 ## Как запускать
 
 Внутри Airflow (как в конвейере):
 
 ```bash
-docker compose exec -T airflow dbt build \
-  --project-dir /opt/airflow/dbt/oil_production \
-  --profiles-dir /opt/airflow/dbt
+make dbt        # dbt build (подставляет параметры подключения сам)
+make dbt-test   # только тесты
+```
+
+Напрямую, если нужно передать свои параметры:
+
+```bash
+docker compose exec -T \
+  -e CLICKHOUSE_HOST=clickhouse -e CLICKHOUSE_PORT=8123 \
+  -e CLICKHOUSE_USER=dwh -e CLICKHOUSE_PASSWORD=dwh -e CLICKHOUSE_DB=dwh \
+  airflow dbt build --project-dir /opt/airflow/dbt/oil_production --profiles-dir /opt/airflow/dbt
 ```
 
 Или из корня проекта:

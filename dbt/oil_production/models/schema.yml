@@ -90,6 +90,10 @@ models:
         description: "Доля воды в добытой жидкости; всегда в [0, 1]"
         data_tests:
           - not_null
+      - name: compensation
+        description: "Закачка / отбор жидкости; 0, если закачки на месторождении нет"
+        data_tests:
+          - not_null
 
   - name: mart_well_performance
     description: >
