@@ -189,6 +189,11 @@ make dbt-test   # только тесты по собранным моделям
 загружает `dbt/ci_seed.sql` и запускает `dbt build` — ошибки компиляции и тесты
 ловятся до мержа.
 
+**SCD используется, а не просто лежит:** `mart_well_performance` делает point-in-time join
+к `dim_well_scd` — колонка `purpose_on_date` (назначение на дату месяца) и флаг
+`purpose_from_history`. На стенде: 17 765 строк до и после join (размножения нет),
+у 69 строки назначение на дату отличается от текущего.
+
 **Источник правды один:** витрину строит dbt. Ручная задача `build_mart` и её SQL
 удалены из DAG, DDL витрины убран из `clickhouse/init/01_schema.sql`, Superset читает
 `dwh_marts.mart_field_monthly`. Это зафиксировано тестом: `tests/test_dbt_project.py`

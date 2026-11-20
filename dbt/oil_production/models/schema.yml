@@ -9,6 +9,8 @@ sources:
         description: "Суточная закачка по нагнетательным скважинам"
       - name: dim_well
         description: "Измерение «Скважина» с иерархией (месторождение → куст → пласт)"
+      - name: dim_well_scd
+        description: "SCD Type 2: версии атрибутов скважины (valid_from / valid_to / is_current)"
 
 # Модели
 models:
@@ -108,3 +110,9 @@ models:
         description: "Доля воды; NULL, если жидкости не было (остановленная скважина)"
       - name: oil_rate_t_per_day
         description: "Среднесуточный дебит по отработанным часам"
+      - name: purpose_on_date
+        description: "Назначение на дату месяца из SCD; текущее, если истории за период нет"
+        data_tests:
+          - not_null
+      - name: purpose_from_history
+        description: "1 — назначение взято из истории версий, 0 — fallback на текущее"

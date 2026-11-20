@@ -35,6 +35,9 @@ SELECT
     w.field_name                              AS field_name,
     w.formation_name                          AS formation_name,
     w.purpose                                 AS purpose,
+    -- назначение на дату месяца из SCD; если истории за этот период нет — текущее
+    if(v.well_id = 0, w.purpose, v.purpose)   AS purpose_on_date,
+    if(v.well_id = 0, 0, 1)                   AS purpose_from_history,
     w.trajectory                              AS trajectory,
     p.oil_t                                   AS oil_t,
     p.water_m3                                AS water_m3,
@@ -48,3 +51,9 @@ SELECT
        p.oil_t / (p.hours_worked / 24), NULL) AS oil_rate_t_per_day
 FROM with_prev AS p
 INNER JOIN {{ ref('stg_dim_well') }} AS w ON p.well_id = w.well_id
+-- Point-in-time: версия, действовавшая в месяце. Интервал полуоткрытый,
+-- поэтому для каждой пары «скважина × месяц» подходит не больше одной версии.
+LEFT JOIN {{ source('dwh', 'dim_well_scd') }} AS v
+       ON v.well_id = p.well_id
+      AND p.month >= v.valid_from
+      AND p.month <  v.valid_to

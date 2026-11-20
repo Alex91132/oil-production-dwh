@@ -47,6 +47,39 @@ INSERT INTO dwh.dim_well VALUES
     (2, 'W-2', 1, 'Field A', 'North', 10, 'Pad 10', 7, 'ЮС2', 850, 'producer', 'directional', '2014-06-01', '2015-02-01', 2800),
     (3, 'W-3', 1, 'Field A', 'North', 11, 'Pad 11', 9, 'ЮС3', 840, 'injector', 'horizontal', '2016-03-01', '2016-09-01', 3100);
 
+CREATE TABLE IF NOT EXISTS dwh.dim_well_scd
+(
+    well_scd_id UInt64,
+    well_id UInt32,
+    well_name String,
+    field_id UInt16,
+    field_name LowCardinality(String),
+    region LowCardinality(String),
+    pad_id UInt32,
+    pad_name LowCardinality(String),
+    formation_id UInt16,
+    formation_name LowCardinality(String),
+    purpose LowCardinality(String),
+    trajectory LowCardinality(String),
+    spud_date Date32,
+    start_date Date32,
+    md_m Float32,
+    valid_from Date32,
+    valid_to Date32,
+    is_current Bool
+)
+ENGINE = MergeTree ORDER BY (well_id, valid_from);
+
+INSERT INTO dwh.dim_well_scd VALUES
+    (1, 1, 'W-1', 1, 'Field A', 'North', 10, 'Pad 10', 7, 'ЮС2', 'producer', 'horizontal',
+     '2014-05-01', '2015-01-01', 3200, '2015-01-01', '2299-12-31', 1),
+    (2, 2, 'W-2', 1, 'Field A', 'North', 10, 'Pad 10', 7, 'ЮС2', 'producer', 'directional',
+     '2014-06-01', '2015-02-01', 2800, '2015-02-01', '2020-12-01', 0),
+    (3, 2, 'W-2', 1, 'Field A', 'North', 10, 'Pad 10', 7, 'ЮС2', 'injector', 'directional',
+     '2014-06-01', '2015-02-01', 2800, '2020-12-01', '2299-12-31', 1),
+    (4, 3, 'W-3', 1, 'Field A', 'North', 11, 'Pad 11', 9, 'ЮС3', 'injector', 'horizontal',
+     '2016-03-01', '2016-09-01', 3100, '2016-09-01', '2299-12-31', 1);
+
 INSERT INTO dwh.fact_production_daily VALUES
     ('2021-01-01', 1, 24, 100, 20, 5),
     ('2021-01-02', 1, 24, 98, 22, 5),

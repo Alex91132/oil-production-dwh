@@ -25,7 +25,7 @@ MODELS = {
     "stg_production_daily", "stg_injection_daily", "stg_dim_well",
     "mart_field_monthly", "mart_well_performance",
 }
-SOURCES = {"fact_production_daily", "fact_injection_daily", "dim_well"}
+SOURCES = {"fact_production_daily", "fact_injection_daily", "dim_well", "dim_well_scd"}
 
 
 def model_files() -> dict[str, Path]:
