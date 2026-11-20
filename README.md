@@ -183,6 +183,7 @@ make dbt-test   # только тесты по собранным моделям
 | `assert_well_exists_in_dim` | кастомный | Каждый факт имеет измерение |
 | `assert_mart_matches_facts` | кастомный | Суммы витрины = суммы фактов |
 | `assert_mart_grain_unique` | кастомный | Нет дублей по (месяц, месторождение) |
+| `assert_watercut_null_only_without_liquid` | кастомный | `watercut` = NULL только при нулевой жидкости |
 
 **CI:** отдельный workflow `dbt.yml` поднимает ClickHouse сервис-контейнером,
 загружает `dbt/ci_seed.sql` и запускает `dbt build` — ошибки компиляции и тесты

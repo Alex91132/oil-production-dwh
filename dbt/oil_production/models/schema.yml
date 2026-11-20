@@ -105,7 +105,6 @@ models:
         data_tests:
           - not_null
       - name: watercut
-        data_tests:
-          - not_null
+        description: "Доля воды; NULL, если жидкости не было (остановленная скважина)"
       - name: oil_rate_t_per_day
         description: "Среднесуточный дебит по отработанным часам"

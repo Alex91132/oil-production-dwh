@@ -184,6 +184,7 @@ def oil_dwh_monthly_load():
     @task
     def dbt_build():
         """Витрины строит dbt: staging + marts в базе dwh_marts, вместе с тестами."""
+        import shutil
         import subprocess
         import sys
 
@@ -196,8 +197,10 @@ def oil_dwh_monthly_load():
             "CLICKHOUSE_PASSWORD": conn.password or "",
             "CLICKHOUSE_DB": conn.schema or "dwh",
         }
+        # dbt ставится как консольная команда: `python -m dbt` не запускается
+        dbt_bin = shutil.which("dbt") or "dbt"
         result = subprocess.run(
-            [sys.executable, "-m", "dbt", "build",
+            [dbt_bin, "build",
              "--project-dir", "/opt/airflow/dbt/oil_production",
              "--profiles-dir", "/opt/airflow/dbt"],
             env=env, capture_output=True, text=True, check=False,

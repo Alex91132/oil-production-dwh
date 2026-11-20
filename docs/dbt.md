@@ -82,6 +82,7 @@ oil_t_per_day = oil_t / число дней в месяце
 | `assert_well_exists_in_dim` | каждый факт имеет измерение |
 | `assert_mart_matches_facts` | суммы витрины равны суммам фактов |
 | `assert_mart_grain_unique` | одна строка на месторождение × месяц |
+| `assert_watercut_null_only_without_liquid` | `watercut` = NULL ровно тогда, когда жидкости не было |
 
 ## Как запускать
 
