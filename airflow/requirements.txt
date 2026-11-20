@@ -1,3 +1,5 @@
 ﻿clickhouse-connect==1.10.0
 # numpy, scipy и pandas уже есть в базовом образе apache/airflow — не дублируем,
 # иначе сборка скачивает десятки мегабайт зря
+# dbt нужен задаче dbt_build: витрины строятся моделями
+dbt-clickhouse==1.9.0

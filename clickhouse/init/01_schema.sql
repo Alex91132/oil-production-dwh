@@ -132,25 +132,5 @@ ORDER BY (well_id, start_date);
 -- Витрины
 -- ---------------------------------------------------------------------------
 
--- Месторождение × месяц: всё для отчёта о добыче и дашборда
-CREATE TABLE dwh.mart_field_monthly
-(
-    month            Date,
-    field_name       LowCardinality(String),
-    producing_wells  UInt32,
-    injecting_wells  UInt32,
-    oil_t            Decimal(18, 3),
-    water_m3         Decimal(18, 3),
-    gas_km3          Decimal(18, 3),
-    liquid_m3        Float64,         -- нефть пересчитана в м3 по плотности + вода
-    injection_m3     Decimal(18, 3),
-    oil_t_per_day    Float64,
-    watercut         Float64,         -- доля воды в жидкости
-    compensation     Float64,         -- закачка / отбор жидкости
-    built_at         DateTime DEFAULT now()
-)
-ENGINE = MergeTree
-PARTITION BY toYYYYMM(month)
-ORDER BY (month, field_name);
-
-CREATE TABLE dwh.stg_mart_field_monthly AS dwh.mart_field_monthly;
+-- Витрина `dwh_marts.mart_field_monthly` строится dbt (см. dbt/ и docs/dbt.md):
+-- в init-скриптах её нет, иначе получилось бы два источника правды.

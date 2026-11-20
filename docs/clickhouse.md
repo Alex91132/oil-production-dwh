@@ -14,7 +14,9 @@ PostgreSQL (OLTP, ops.*)  ──►  Airflow DAG oil_dwh_monthly_load  ──►
 | `fact_production_daily` | факт | скважина × сутки | `MergeTree`, `PARTITION BY toYYYYMM(prod_date)`, `ORDER BY (well_id, prod_date)` |
 | `fact_injection_daily` | факт | скважина × сутки | так же |
 | `fact_interventions` | факт | мероприятие | атрибуты вида ГТМ денормализованы в факт |
-| `mart_field_monthly` | витрина | месторождение × месяц | добыча, обводнённость, компенсация — готово для дашборда |
+| `dim_well_scd` | измерение (SCD2) | скважина × период | история атрибутов: `valid_from` / `valid_to` / `is_current`, переводы под закачку |
+| `dwh_marts.mart_field_monthly` | витрина | месторождение × месяц | **строится dbt**, не Airflow: добыча, обводнённость, компенсация — см. [dbt.md](dbt.md) |
+| `dwh_marts.mart_well_performance` | витрина | скважина × месяц | **строится dbt**: дебит, обводнённость, темп падения |
 
 Суммы хранятся в `Decimal`, а не во `Float`: только так сверку с источником
 можно делать на точное равенство, а не «примерно совпадает».

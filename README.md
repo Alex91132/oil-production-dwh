@@ -11,7 +11,9 @@
 **Стек:** PostgreSQL 16 · ClickHouse 26.8 · Apache Airflow 3.3 · Apache Superset 6.1 · SQL · Python · Docker Compose
 
 ```
-PostgreSQL (OLTP)  ──►  Airflow DAG  ──►  ClickHouse (DWH, «звезда»)  ──►  Superset (дашборд)
+PostgreSQL (OLTP)  ──►  Airflow DAG  ──►  ClickHouse dwh.* (сырьё, «звезда»)
+                                              │
+                                              └──► dbt (staging + marts) ──► Superset (дашборд)
  источник, 3НФ          месяц за месяцем    факты + измерения + витрины     «дашборд как код»
                         со сверкой
 ```
@@ -159,9 +161,12 @@ compensation = injection_m3 / liquid_m3
 **Как запускать:**
 
 ```bash
-docker compose run --rm dbt      # ждёт данные в ClickHouse (до 10 минут) и делает dbt build
-docker compose up -d dbt         # то же, но сервисом
+make dbt        # dbt build внутри Airflow (модели + тесты)
+make dbt-test   # только тесты по собранным моделям
 ```
+
+В конвейере dbt запускает задача `dbt_build` — после загрузки фактов и справочника,
+до сверки `reconcile`. Если dbt упал, конвейер останавливается.
 
 `dbt build` = модели + тесты за один прогон: собрать витрину с битыми данными нельзя.
 Документация и lineage — `dbt docs generate` / `dbt docs serve`.
@@ -183,9 +188,10 @@ docker compose up -d dbt         # то же, но сервисом
 загружает `dbt/ci_seed.sql` и запускает `dbt build` — ошибки компиляции и тесты
 ловятся до мержа.
 
-**Ограничение, о котором честно:** витрина `mart_field_monthly` пока строится двумя
-путями — задачей `build_mart` в Airflow и моделью dbt. Это переходный период: числа
-сверяются, но источник правды один — после удаления `build_mart` из DAG останется dbt.
+**Источник правды один:** витрину строит dbt. Ручная задача `build_mart` и её SQL
+удалены из DAG, DDL витрины убран из `clickhouse/init/01_schema.sql`, Superset читает
+`dwh_marts.mart_field_monthly`. Это зафиксировано тестом: `tests/test_dbt_project.py`
+падает, если `build_mart` вернётся.
 
 - `build_dim_well_scd` берёт актуальные атрибуты из PostgreSQL, сравнивает с текущими
   версиями в ClickHouse и пишет только изменения. Дата версии — **день запуска**, а не
@@ -213,6 +219,20 @@ docker compose exec -T clickhouse clickhouse-client --multiquery < clickhouse/in
   архивные срезы.
 - **Мягкие удаления.** Скважина, пропавшая из источника, версию не закрывает —
   это осознанное упрощение, чтобы не терять историю при сбое выгрузки.
+
+## Лицензия
+
+MIT — см. [LICENSE](LICENSE).
+
+## Команды
+
+```bash
+make up        # поднять стенд
+make test      # 52 теста
+make dbt       # dbt build внутри Airflow
+make scd       # прогон задачи build_dim_well_scd
+make down      # остановить
+```
 
 ## Быстрый старт
 

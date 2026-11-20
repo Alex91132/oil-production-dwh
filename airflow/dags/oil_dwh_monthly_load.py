@@ -10,9 +10,10 @@
    (маленькие таблицы) с атомарной подменой через `EXCHANGE TABLES`.
 2. `load_production`, `load_injection` — месяц суточных фактов собирается в
    промежуточной таблице и атомарно подменяет партицию (`REPLACE PARTITION`).
-3. `build_mart` — витрина «месторождение × месяц» тем же способом.
-4. `reconcile` — сверка с источником: число строк и точные суммы. При расхождении
-   запуск падает.
+3. `dbt_build` — витрины строит dbt: staging (view) и marts (table) в базе
+   `dwh_marts`, там же прогоняются тесты моделей. Ручного SQL витрины больше нет.
+4. `reconcile` — сверка с источником: число строк, точные суммы и сумма по витрине
+   dbt. При расхождении запуск падает.
 5. `build_dim_well_scd` — SCD Type 2: сравнивает текущие версии атрибутов скважин
    с источником и закрывает/открывает версии при переводах под закачку и сменах пласта.
 6. `profile_after_load` — профиль распределения `oil_t` (KS-тест) плюс сверки
@@ -25,6 +26,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import timedelta
 
 import pendulum
@@ -62,50 +64,6 @@ INTERVENTIONS_SQL = """
     ORDER BY i.intervention_id
 """
 
-MART_SQL = """
-    INSERT INTO stg_mart_field_monthly
-        (month, field_name, producing_wells, injecting_wells, oil_t, water_m3, gas_km3,
-         liquid_m3, injection_m3, oil_t_per_day, watercut, compensation)
-    WITH
-        prod AS (
-            SELECT
-                w.field_name                                          AS field_name,
-                uniqExactIf(p.well_id, p.hours_on > 0)                AS producing_wells,
-                sum(p.oil_t)                                          AS oil_t,
-                sum(p.water_m3)                                       AS water_m3,
-                sum(p.gas_km3)                                        AS gas_km3,
-                sum(toFloat64(p.oil_t) * 1000 / w.oil_density + toFloat64(p.water_m3)) AS liquid_m3
-            FROM fact_production_daily AS p
-            INNER JOIN dim_well AS w ON w.well_id = p.well_id
-            WHERE p.prod_date >= {start:Date} AND p.prod_date < {end:Date}
-            GROUP BY field_name
-        ),
-        inj AS (
-            SELECT
-                w.field_name                                          AS field_name,
-                uniqExactIf(i.well_id, i.hours_on > 0)                AS injecting_wells,
-                sum(i.water_m3)                                       AS injection_m3
-            FROM fact_injection_daily AS i
-            INNER JOIN dim_well AS w ON w.well_id = i.well_id
-            WHERE i.inj_date >= {start:Date} AND i.inj_date < {end:Date}
-            GROUP BY field_name
-        )
-    SELECT
-        {start:Date},
-        prod.field_name,
-        prod.producing_wells,
-        inj.injecting_wells,
-        prod.oil_t,
-        prod.water_m3,
-        prod.gas_km3,
-        prod.liquid_m3,
-        inj.injection_m3,
-        toFloat64(prod.oil_t) / dateDiff('day', {start:Date}, {end:Date}),
-        if(prod.liquid_m3 > 0, toFloat64(prod.water_m3) / prod.liquid_m3, 0),
-        if(prod.liquid_m3 > 0, toFloat64(inj.injection_m3) / prod.liquid_m3, 0)
-    FROM prod
-    LEFT JOIN inj USING (field_name)
-"""
 
 
 # ---------------------------------------------------------------------------
@@ -224,12 +182,30 @@ def oil_dwh_monthly_load():
             "WHERE inj_date >= %s AND inj_date < %s")
 
     @task
-    def build_mart():
-        start, end, partition = month_bounds()
-        client = ch_client()
-        replace_partition(
-            client, "mart_field_monthly", "stg_mart_field_monthly", partition,
-            lambda: client.command(MART_SQL, parameters={"start": start, "end": end}))
+    def dbt_build():
+        """Витрины строит dbt: staging + marts в базе dwh_marts, вместе с тестами."""
+        import subprocess
+        import sys
+
+        conn = Connection.get(CH_CONN_ID)
+        env = {
+            **os.environ,
+            "CLICKHOUSE_HOST": conn.host,
+            "CLICKHOUSE_PORT": str(conn.port or 8123),
+            "CLICKHOUSE_USER": conn.login,
+            "CLICKHOUSE_PASSWORD": conn.password or "",
+            "CLICKHOUSE_DB": conn.schema or "dwh",
+        }
+        result = subprocess.run(
+            [sys.executable, "-m", "dbt", "build",
+             "--project-dir", "/opt/airflow/dbt/oil_production",
+             "--profiles-dir", "/opt/airflow/dbt"],
+            env=env, capture_output=True, text=True, check=False,
+        )
+        print(result.stdout[-8000:])
+        if result.returncode != 0:
+            print(result.stderr[-4000:], file=sys.stderr)
+            raise RuntimeError(f"dbt build завершился с кодом {result.returncode}")
 
     @task
     def reconcile(production_rows: int, injection_rows: int):
@@ -253,41 +229,16 @@ def oil_dwh_monthly_load():
                 client.query("""SELECT count(), sum(water_m3) FROM fact_injection_daily
                                 WHERE inj_date >= {start:Date} AND inj_date < {end:Date}""",
                              parameters=params).result_rows[0]),
-            "витрина = факт по нефти": (
+            "витрина dbt = факт по нефти": (
                 client.query("""SELECT sum(oil_t) FROM fact_production_daily
                                 WHERE prod_date >= {start:Date} AND prod_date < {end:Date}""",
                              parameters=params).result_rows[0],
-                client.query("SELECT sum(oil_t) FROM mart_field_monthly WHERE month = {start:Date}",
+                client.query("SELECT sum(oil_t) FROM dwh_marts.mart_field_monthly WHERE month = {start:Date}",
                              parameters=params).result_rows[0]),
         }
         failed = {name: (src, dst) for name, (src, dst) in checks.items() if tuple(src) != tuple(dst)}
         for name, (src, dst) in checks.items():
             print(f"{'OK ' if name not in failed else 'ОШИБКА'} {name}: источник {tuple(src)}, хранилище {tuple(dst)}")
-
-        # Паритет с dbt: витрина временно строится двумя путями — Airflow и dbt.
-        # Пока миграция не завершена, сверяем их между собой; если dbt ещё не
-        # собирался, проверку пропускаем (иначе DAG зависел бы от порядка запуска).
-        has_dbt_mart = client.query(
-            "SELECT count() FROM system.tables "
-            "WHERE database = 'dwh_marts' AND name = 'mart_field_monthly'"
-        ).result_rows[0][0]
-        if has_dbt_mart:
-            airflow_mart = client.query(
-                """SELECT sum(oil_t), sum(water_m3), sum(injection_m3)
-                   FROM dwh.mart_field_monthly WHERE month = {start:Date}""",
-                parameters=params).result_rows[0]
-            dbt_mart = client.query(
-                """SELECT sum(oil_t), sum(water_m3), sum(injection_m3)
-                   FROM dwh_marts.mart_field_monthly WHERE month = {start:Date}""",
-                parameters=params).result_rows[0]
-            diff = max((abs(float(a) - float(b)) for a, b in zip(airflow_mart, dbt_mart)
-                        if a is not None and b is not None), default=0.0)
-            print(f"{'OK ' if diff <= 0.01 else 'ОШИБКА'} паритет с dbt: "
-                  f"airflow {tuple(airflow_mart)}, dbt {tuple(dbt_mart)}")
-            if diff > 0.01:
-                failed["паритет Airflow ↔ dbt"] = (airflow_mart, dbt_mart)
-        else:
-            print("паритет с dbt: витрина dwh_marts ещё не собрана — проверка пропущена")
 
         if failed:
             raise ValueError(f"Расхождение с источником за {start:%Y-%m}: {failed}")
@@ -344,12 +295,13 @@ def oil_dwh_monthly_load():
     scd = build_dim_well_scd()
     production = load_production()
     injection = load_injection()
-    mart = build_mart()
+    marts = dbt_build()
 
     reference >> scd
-    [reference, production, injection] >> mart
+    reference >> marts
+    [production, injection] >> marts
     reconcile_task = reconcile(production, injection)
-    mart >> reconcile_task
+    marts >> reconcile_task
     reconcile_task >> profile_after_load()
 
 

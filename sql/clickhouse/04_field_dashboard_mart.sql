@@ -17,7 +17,7 @@ FROM
         round(100 * compensation, 1)     AS compensation_pct,
         round(sum(oil_t) OVER (PARTITION BY field_name, toYear(month) ORDER BY month) / 1000, 1)
                                          AS ytd_oil_kt
-    FROM dwh.mart_field_monthly
+    FROM dwh_marts.mart_field_monthly
 )
-WHERE month > (SELECT max(month) FROM dwh.mart_field_monthly) - INTERVAL 12 MONTH
+WHERE month > (SELECT max(month) FROM dwh_marts.mart_field_monthly) - INTERVAL 12 MONTH
 ORDER BY field_name, month;

@@ -82,6 +82,7 @@ def virtual_sql(filename):
 
 DATASETS = {
     "mart": {
+        "schema": "dwh_marts",          # витрина строится dbt
         "table_name": "mart_field_monthly",
         "main_dttm_col": "month",
         "verbose": {"month": "Месяц", "field_name": "Месторождение"},
@@ -220,7 +221,8 @@ def remove_previous(api):
 
 
 def create_dataset(api, db_id, spec):
-    body = {"database": db_id, "schema": "dwh", "table_name": spec["table_name"]}
+    body = {"database": db_id, "schema": spec.get("schema", "dwh"),
+            "table_name": spec["table_name"]}
     sql = spec.get("sql") or (virtual_sql(spec["sql_file"]) if "sql_file" in spec else None)
     if sql:
         body["sql"] = sql.strip()
