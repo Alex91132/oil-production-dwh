@@ -117,7 +117,8 @@ def dag_task_names() -> set[str]:
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef):
             for decorator in node.decorator_list:
-                if isinstance(decorator, ast.Name) and decorator.id == "task":
+                target = decorator.func if isinstance(decorator, ast.Call) else decorator
+                if isinstance(target, ast.Name) and target.id == "task":
                     names.add(node.name)
     return names
 
@@ -133,6 +134,12 @@ def test_dag_uses_dbt_and_has_no_manual_mart():
 def test_reconcile_checks_dbt_mart():
     source = dag_source()
     assert "dwh_marts.mart_field_monthly" in source, "сверка не смотрит в витрину dbt"
+
+
+def test_dbt_task_is_serialized():
+    """При catchup три месяца идут параллельно: сборка витрин не должна пересекаться."""
+    source = dag_source()
+    assert "max_active_tis_per_dag=1" in source
 
 
 def test_dag_file_parses():

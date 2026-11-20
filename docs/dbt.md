@@ -118,11 +118,15 @@ make dbt-test   # только тесты
 В DAG это задача `dbt_build`: выполняется после `load_production`/`load_injection`
 и `refresh_reference`, перед `reconcile`. Если dbt упал — конвейер останавливается.
 
+Витрины пересобираются целиком (в них сотни строк), поэтому задача сериализована
+(`max_active_tis_per_dag=1`): при backfill Airflow запускает до трёх месяцев
+параллельно, и одновременная запись в одни таблицы недопустима.
+
 ## CI
 
 Workflow `dbt.yml` поднимает ClickHouse сервис-контейнером, загружает
 `dbt/ci_seed.sql` через `dbt/ci_load.py` (HTTP ClickHouse не принимает несколько
-операторов за раз) и запускает `dbt build`. Ожидаемый результат: `PASS=32, ERROR=0`.
+операторов за раз) и запускает `dbt build`. Ожидаемый результат: `PASS=35, ERROR=0`.
 
 Отдельно `tests/test_dbt_project.py` проверяет структуру без запуска dbt: что нет
 `target:` в `dbt_project.yml` (dbt 1.12 падает), что все `ref` и `source`

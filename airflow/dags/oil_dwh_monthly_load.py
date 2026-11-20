@@ -19,9 +19,11 @@
 6. `profile_after_load` — профиль распределения `oil_t` (KS-тест) плюс сверки
    строк и сумм; при материальном расхождении запуск падает.
 
-**Идемпотентность.** Каждая задача перезаписывает только «свою» месячную партицию,
-поэтому повторный запуск и автоматические ретраи не создают дублей, а
-параллельные запуски разных месяцев не мешают друг другу.
+**Идемпотентность.** `refresh_reference`, `load_production`, `load_injection` перезаписывают
+свои таблицы и партиции, поэтому повторный запуск и ретраи не создают дублей.
+`dbt_build` собирает витрины целиком (таблицы маленькие — сотни строк), поэтому
+он сериализован: `max_active_tis_per_dag=1`, иначе параллельные сборки в catchup
+мешали бы друг другу. Так же сериализован `build_dim_well_scd`.
 """
 
 from __future__ import annotations
@@ -181,7 +183,7 @@ def oil_dwh_monthly_load():
             f"SELECT {', '.join(INJECTION_COLUMNS)} FROM ops.daily_injection "
             "WHERE inj_date >= %s AND inj_date < %s")
 
-    @task
+    @task(max_active_tis_per_dag=1)
     def dbt_build():
         """Витрины строит dbt: staging + marts в базе dwh_marts, вместе с тестами."""
         import shutil
@@ -247,7 +249,9 @@ def oil_dwh_monthly_load():
             raise ValueError(f"Расхождение с источником за {start:%Y-%m}: {failed}")
         print(f"Сверка за {start:%Y-%m} пройдена: добыча {production_rows} строк, закачка {injection_rows} строк")
 
-    @task
+    # max_active_tis_per_dag=1: при catchup запуски идут параллельно (max_active_runs=3),
+    # а запись версий и пересборка витрин не должны выполняться одновременно
+    @task(max_active_tis_per_dag=1)
     def build_dim_well_scd():
         """SCD Type 2: снимок атрибутов скважин на дату запуска.
 
